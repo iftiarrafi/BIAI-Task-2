@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_groq import ChatGroq
@@ -132,7 +132,7 @@ def build_graph(store: InMemoryVectorStore, checkpointer: InMemorySaver):
         latest = next(m for m in reversed(state["messages"]) if m.type == "human")
         language = _privacy_reply_language(str(latest.content))
         return {
-            "messages": [HumanMessage(PRIVACY_REPLIES[language])],
+            "messages": [AIMessage(PRIVACY_REPLIES[language])],
             "context": "",
             "sources": [],
         }
