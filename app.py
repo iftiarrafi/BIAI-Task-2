@@ -1,78 +1,171 @@
-import os
 import uuid
-from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.messages import AIMessage, HumanMessage
 
-load_dotenv()
-from assistant import build_graph, build_vector_store, load_faq  # noqa: E402
+from assistant import FAQ_COUNT, chatbot, get_all_threads
 
-FAQ_PATH = Path(os.getenv("FAQ_PATH", Path(__file__).parent / "bank-faq.csv"))
+st.set_page_config(
+    page_title="NB Go Assistant",
+    page_icon="🏦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-st.set_page_config(page_title="NB Go Assistant", page_icon="🏦")
+st.markdown(
+    """
+    <style>
+    #MainMenu, footer, [data-testid="stHeader"] { visibility:hidden; }
+    .stApp { background:var(--background-color); }
+    [data-testid="stAppViewContainer"] > .main { padding-top:0; }
+    [data-testid="stMainBlockContainer"] {
+        max-width: 900px;
+        padding: 2rem 2rem 7rem;
+    }
+    [data-testid="stSidebar"] {
+        background:var(--secondary-background-color);
+        border-right:1px solid rgba(128,128,128,.15);
+    }
+    [data-testid="stSidebar"] > div:first-child { padding:1.1rem .8rem; }
+    [data-testid="stSidebar"] .stButton > button {
+        width:100%; min-height:42px; text-align:left; justify-content:flex-start;
+        border:0; border-radius:9px; background:transparent; padding:.55rem .8rem;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover { background:rgba(128,128,128,.14); }
+    [data-testid="stSidebar"] .stButton > button > div {
+        width:100%; justify-content:flex-start; text-align:left;
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] { text-align:left; }
+    .brand { font-size:1.2rem; font-weight:700; letter-spacing:-.6px; padding:.4rem 0 1.5rem; }
+    .brand-icon {
+        display:inline-flex; align-items:center; justify-content:center; width:31px; height:31px;
+        margin-right:8px; border-radius:50%; background:#10a37f; color:#fff; font-size:17px;
+    }
+    .sidebar-section {
+        color:var(--text-color); opacity:.65; font-size:.78rem; font-weight:600;
+        margin:1.3rem 0 .6rem .6rem;
+    }
+    .welcome { padding-top:15vh; text-align:center; }
+    .welcome h1 { font-size:clamp(1.8rem,4vw,2.5rem); font-weight:600; letter-spacing:-1px; margin-bottom:.6rem; }
+    .welcome p { color:var(--text-color); opacity:.65; font-size:1rem; }
+    .welcome-icon { font-size:2.5rem; margin-bottom:1rem; }
+    .suggestion {
+        padding:14px 16px; border:1px solid rgba(128,128,128,.23); border-radius:14px;
+        min-height:75px; font-size:.88rem; color:var(--text-color);
+        background:var(--secondary-background-color);
+    }
+    [data-testid="stChatMessage"] { border:0; padding:1rem .25rem; background:transparent; }
+    [data-testid="stChatMessageContent"] { line-height:1.75; font-size:.96rem; overflow-wrap:anywhere; }
+    [data-testid="stChatMessageContent"] pre { border-radius:12px; border:1px solid rgba(128,128,128,.2); }
+    [data-testid="stChatMessageContent"] code { font-size:.88em; }
+    [data-testid="stChatInput"] { max-width:850px; margin-left:auto; margin-right:auto; }
+    [data-testid="stChatInput"] > div {
+        border-radius:24px; border:1px solid rgba(128,128,128,.35);
+        background:var(--secondary-background-color);
+    }
+    [data-testid="stChatInput"] textarea { padding-top:14px; padding-bottom:14px; font-size:.95rem; }
+    .caption-text { opacity:.55; font-size:.76rem; text-align:center; margin-top:1.1rem; }
+    @media (max-width: 700px) {
+        [data-testid="stMainBlockContainer"] { padding:1rem 1rem 6rem; }
+        .welcome { padding-top:8vh; }
+        [data-testid="stChatMessage"] { padding:.6rem 0; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-for key in ("GROQ_API_KEY", "GOOGLE_API_KEY"):
-    if not os.getenv(key):
-        st.error(f"Missing {key}. Add it to your .env file.")
-        st.stop()
 
+def load_conversation(thread_id: str):
+    state = chatbot.get_state({"configurable": {"thread_id": thread_id}})
+    if not state or not state.values:
+        return []
 
-@st.cache_resource
-def get_checkpointer() -> InMemorySaver:
-    return InMemorySaver()  # survives reruns, shared across threads
+    messages = []
+    for message in state.values.get("messages", []):
+        if isinstance(message, HumanMessage):
+            role = "user"
+        elif isinstance(message, AIMessage):
+            role = "assistant"
+        else:
+            continue
+        messages.append({"role": role, "content": str(message.content)})
+    return messages
 
-
-@st.cache_resource(show_spinner="Loading bank FAQ…")
-def get_graph(faq_mtime: float):
-    """Re-reads bank-faq.csv and rebuilds the vector store on app start,
-    and again whenever the file's modified time changes."""
-    docs = load_faq(FAQ_PATH)
-    store = build_vector_store(docs)
-    return build_graph(store, get_checkpointer()), len(docs)
-
-
-graph, faq_count = get_graph(FAQ_PATH.stat().st_mtime)
 
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
-    st.session_state.chat = []
+if "new_threads" not in st.session_state:
+    st.session_state.new_threads = [st.session_state.thread_id]
 
 with st.sidebar:
-    st.header("🏦 Nirbhor Bank")
-    st.caption(f"{faq_count} FAQ entries loaded from `{FAQ_PATH.name}`")
-    if st.button("New chat"):
+    st.markdown(
+        "<div class='brand'><span class='brand-icon'>🏦</span> NB Go</div>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button("New chat", use_container_width=True):
         st.session_state.thread_id = str(uuid.uuid4())
-        st.session_state.chat = []
+        st.session_state.new_threads.append(st.session_state.thread_id)
         st.rerun()
 
-st.title("NB Go Assistant")
-st.caption("Ask in English, বাংলা, or Banglish.")
+    st.markdown("<div class='sidebar-section'>YOUR CHATS</div>", unsafe_allow_html=True)
+    thread_ids = list(dict.fromkeys(get_all_threads() + st.session_state.new_threads))
+    for thread_id in reversed(thread_ids):
+        title = "New conversation"
+        for message in load_conversation(thread_id):
+            if message["role"] == "user" and message["content"].strip():
+                title = " ".join(message["content"].split())
+                if len(title) > 32:
+                    title = title[:29] + "..."
+                break
+        if thread_id == st.session_state.thread_id:
+            title = "●  " + title
+        if st.button(title, key=f"thread-{thread_id}", use_container_width=True):
+            st.session_state.thread_id = thread_id
+            st.rerun()
 
-for m in st.session_state.chat:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
-        if m.get("sources"):
-            with st.expander("Retrieved FAQ entries"):
-                st.write(", ".join(f"#{i}" for i in m["sources"]))
+messages = load_conversation(st.session_state.thread_id)
+if not messages:
+    st.markdown(
+        "<div class='welcome'><div class='welcome-icon'>🏦</div>"
+        "<h1>How can I help?</h1>"
+        "<p>Ask about your banking services in English, বাংলা, or Banglish.</p></div>",
+        unsafe_allow_html=True,
+    )
+    left, right = st.columns(2)
+    with left:
+        st.markdown(
+            "<div class='suggestion'><b>💳 Cards and payments</b><br>"
+            "Ask about card fees, PINs, transfers, or payment issues.</div>",
+            unsafe_allow_html=True,
+        )
+    with right:
+        st.markdown(
+            "<div class='suggestion'><b>🏦 Accounts and services</b><br>"
+            "Ask about account opening, balances, statements, or loans.</div>",
+            unsafe_allow_html=True,
+        )
+else:
+    for message in messages:
+        with st.chat_message(
+            message["role"],
+            avatar="🧑‍💻" if message["role"] == "user" else "🏦",
+        ):
+            st.markdown(message["content"])
 
-if prompt := st.chat_input("Type your question…"):
-    st.session_state.chat.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
+if prompt := st.chat_input("Ask NB Go…"):
+    with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(prompt)
 
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar="🏦"):
         with st.spinner("Thinking…"):
-            result = graph.invoke(
-                {"messages": [HumanMessage(prompt)]},
+            result = chatbot.invoke(
+                {"messages": [HumanMessage(content=prompt)]},
                 config={"configurable": {"thread_id": st.session_state.thread_id}},
             )
-        reply = result["messages"][-1].content
-        st.markdown(reply)
-        
-    st.session_state.chat.append(
-        {"role": "assistant", "content": reply, "sources": result["sources"]}
-    )
+        st.markdown(result["messages"][-1].content)
+        if result.get("sources"):
+            with st.expander("Retrieved FAQ entries"):
+                st.write(", ".join(f"#{source}" for source in result["sources"]))
     st.rerun()

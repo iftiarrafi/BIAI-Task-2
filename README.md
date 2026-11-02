@@ -1,8 +1,10 @@
-# Sample files for Task 2 (bilingual assistant)
+# Nirbhor Bank FAQ Assistant
 
 "Nirbhor Bank PLC" and "NB Go" are fictional.
 
-- `bank-faq.csv`: 30 FAQ entries in English. This is the only source your assistant may answer from.
-- `test-questions.csv`: 40 questions in English, Bangla and Banglish. Some are not covered by the FAQ on purpose.
+- `bank-faq.csv` contains the English bank FAQ and is the assistant's only source for banking answers.
+- `test-questions.csv` contains sample English, Bangla, and Banglish questions.
 
-Your assistant should reply in the same language the customer used. If the FAQ does not cover the question, it should say so and offer to connect the customer to a person.
+The assistant replies in the customer's language and script. Requests for another person's confidential banking information receive a confidentiality response. Unsupported questions are answered with an offer to connect the customer to a person.
+
+The Streamlit app uses an in-memory LangGraph checkpointer. Thread IDs appear in the sidebar, and conversations remain available while the app process is running. Restarting the process clears them.
